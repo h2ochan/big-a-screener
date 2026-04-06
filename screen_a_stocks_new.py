@@ -55,12 +55,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-range-last-months", type=float, default=0.5, help="条件4：近期振幅上限")
     parser.add_argument("--min-volume-ratio", type=float, default=3.0, help="条件5：近期量比下限")
     parser.add_argument("--max-market-cap-yi", type=float, default=200.0, help="条件1：市值上限(亿元)")
-    parser.add_argument("--top-n", type=int, default=10)
+    parser.add_argument("--top-n", type=int, default=10, help="输出数量，0表示全部")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--max-symbols", type=int, default=0, help="最多扫描股票数，0表示全市场")
     parser.add_argument("--symbol-offset", type=int, default=0, help="扫描起始偏移（配合 max-symbols 分批）")
     parser.add_argument("--cache-dir", default=".cache_hist")
     parser.add_argument("--output", type=str, default="screen_results_new.csv", help="输出CSV路径")
+    parser.add_argument("--print-universe-count", action="store_true", help="仅输出股票池数量")
     parser.add_argument("--refresh-cache", action="store_true")
     return parser.parse_args()
 
@@ -292,6 +293,9 @@ def score(c: Candidate) -> tuple[float, float, float]:
 def main() -> None:
     args = parse_args()
     universe = load_universe()
+    if args.print_universe_count:
+        print(len(universe))
+        return
     if args.symbol_offset and args.symbol_offset > 0:
         universe = universe[args.symbol_offset :]
     if args.max_symbols and args.max_symbols > 0:
@@ -327,7 +331,10 @@ def main() -> None:
     # 为避免 Yahoo 401 限流，仅对少量候选再查市值做最终过滤
     stock_map = {s.code: s for s in universe}
     rough = sorted(results, key=score, reverse=True)
-    probe_limit = max(args.top_n * 12, 120)
+    if args.top_n <= 0:
+        probe_limit = len(rough)
+    else:
+        probe_limit = max(args.top_n * 12, 120)
     final_results: list[Candidate] = []
     for cand in rough[:probe_limit]:
         try:
@@ -339,7 +346,9 @@ def main() -> None:
         cand.market_cap_yi = round(mc, 2)
         final_results.append(cand)
 
-    final_results = sorted(final_results, key=score, reverse=True)[: args.top_n]
+    final_results = sorted(final_results, key=score, reverse=True)
+    if args.top_n > 0:
+        final_results = final_results[: args.top_n]
     if not final_results:
         print("没有找到符合条件的股票。你可以放宽参数后再试。")
         return
@@ -349,7 +358,11 @@ def main() -> None:
     out.to_csv(output, index=False)
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 240)
-    print(out.to_string(index=False))
+    if len(out) > 200:
+        print(out.head(200).to_string(index=False))
+        print(f"\n仅展示前200条，共 {len(out)} 条。")
+    else:
+        print(out.to_string(index=False))
     print(f"\n已保存到 {output.resolve()}")
 
 
