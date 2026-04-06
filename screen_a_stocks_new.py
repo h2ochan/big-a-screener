@@ -99,14 +99,37 @@ def load_csv_symbols(url: str, region: str) -> list[StockRef]:
     return refs
 
 
-def load_universe() -> list[StockRef]:
-    refs = load_csv_symbols(
-        "https://raw.githubusercontent.com/irachex/open-stock-data/main/symbols/SSE.csv", "SH"
-    ) + load_csv_symbols(
-        "https://raw.githubusercontent.com/irachex/open-stock-data/main/symbols/SZSE.csv", "SZ"
-    )
-    filtered = [x for x in refs if re.match(r"^(0|3|6)\d{5}$", x.code) and "ST" not in x.name]
-    return list({x.code: x for x in filtered}.values())
+def load_universe(cache_dir: Path, refresh_cache: bool) -> list[StockRef]:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / "universe.csv"
+    should_refresh = refresh_cache
+    if cache_file.exists() and not refresh_cache:
+        # Universe changes slowly; reuse local cache for faster batch runs.
+        if (time.time() - cache_file.stat().st_mtime) < 7 * 24 * 3600:
+            should_refresh = False
+        else:
+            should_refresh = True
+    else:
+        should_refresh = True
+
+    if should_refresh:
+        refs = load_csv_symbols(
+            "https://raw.githubusercontent.com/irachex/open-stock-data/main/symbols/SSE.csv", "SH"
+        ) + load_csv_symbols(
+            "https://raw.githubusercontent.com/irachex/open-stock-data/main/symbols/SZSE.csv", "SZ"
+        )
+        filtered = [x for x in refs if re.match(r"^(0|3|6)\d{5}$", x.code) and "ST" not in x.name]
+        deduped = list({x.code: x for x in filtered}.values())
+        pd.DataFrame([{"code": x.code, "name": x.name, "yahoo_symbol": x.yahoo_symbol} for x in deduped]).to_csv(
+            cache_file, index=False
+        )
+        return deduped
+
+    df = pd.read_csv(cache_file)
+    refs: list[StockRef] = []
+    for _, row in df.iterrows():
+        refs.append(StockRef(code=str(row["code"]).zfill(6), name=str(row["name"]), yahoo_symbol=str(row["yahoo_symbol"])))
+    return refs
 
 
 def cache_path(cache_dir: Path, code: str, suffix: str) -> Path:
@@ -292,7 +315,8 @@ def score(c: Candidate) -> tuple[float, float, float]:
 
 def main() -> None:
     args = parse_args()
-    universe = load_universe()
+    base_cache_dir = Path(args.cache_dir)
+    universe = load_universe(base_cache_dir, args.refresh_cache)
     if args.print_universe_count:
         print(len(universe))
         return
@@ -300,8 +324,8 @@ def main() -> None:
         universe = universe[args.symbol_offset :]
     if args.max_symbols and args.max_symbols > 0:
         universe = universe[: args.max_symbols]
-    hist_cache_dir = Path(args.cache_dir) / "hist"
-    info_cache_dir = Path(args.cache_dir) / "info"
+    hist_cache_dir = base_cache_dir / "hist"
+    info_cache_dir = base_cache_dir / "info"
     results: list[Candidate] = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
@@ -336,11 +360,24 @@ def main() -> None:
     else:
         probe_limit = max(args.top_n * 12, 120)
     final_results: list[Candidate] = []
-    for cand in rough[:probe_limit]:
+    probe = rough[:probe_limit]
+
+    def _fetch_mc(cand: Candidate) -> tuple[str, Optional[float]]:
         try:
-            mc = fetch_market_cap_yi(stock_map[cand.code], info_cache_dir, args.refresh_cache)
+            return cand.code, fetch_market_cap_yi(stock_map[cand.code], info_cache_dir, args.refresh_cache)
         except Exception:
-            continue
+            return cand.code, None
+
+    mc_map: dict[str, Optional[float]] = {}
+    mc_workers = max(1, min(int(args.workers), 16))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=mc_workers) as ex:
+        future_map = {ex.submit(_fetch_mc, cand): cand.code for cand in probe}
+        for fut in concurrent.futures.as_completed(future_map):
+            code, mc = fut.result()
+            mc_map[code] = mc
+
+    for cand in probe:
+        mc = mc_map.get(cand.code)
         if mc is None or mc > args.max_market_cap_yi:
             continue
         cand.market_cap_yi = round(mc, 2)
