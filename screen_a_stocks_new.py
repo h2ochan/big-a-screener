@@ -57,7 +57,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-market-cap-yi", type=float, default=200.0, help="条件1：市值上限(亿元)")
     parser.add_argument("--top-n", type=int, default=10)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--max-symbols", type=int, default=0, help="最多扫描股票数，0表示全市场")
+    parser.add_argument("--symbol-offset", type=int, default=0, help="扫描起始偏移（配合 max-symbols 分批）")
     parser.add_argument("--cache-dir", default=".cache_hist")
+    parser.add_argument("--output", type=str, default="screen_results_new.csv", help="输出CSV路径")
     parser.add_argument("--refresh-cache", action="store_true")
     return parser.parse_args()
 
@@ -289,6 +292,10 @@ def score(c: Candidate) -> tuple[float, float, float]:
 def main() -> None:
     args = parse_args()
     universe = load_universe()
+    if args.symbol_offset and args.symbol_offset > 0:
+        universe = universe[args.symbol_offset :]
+    if args.max_symbols and args.max_symbols > 0:
+        universe = universe[: args.max_symbols]
     hist_cache_dir = Path(args.cache_dir) / "hist"
     info_cache_dir = Path(args.cache_dir) / "info"
     results: list[Candidate] = []
@@ -338,7 +345,7 @@ def main() -> None:
         return
 
     out = pd.DataFrame([x.__dict__ for x in final_results])
-    output = Path("screen_results_new.csv")
+    output = Path(args.output)
     out.to_csv(output, index=False)
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 240)
