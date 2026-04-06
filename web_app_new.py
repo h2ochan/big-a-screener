@@ -106,7 +106,7 @@ with st.sidebar:
     min_volume_ratio_pct = st.number_input("近6月量比下限(%)", min_value=10, max_value=2000, value=300, step=10)
     max_market_cap_yi = st.number_input("市值上限(亿元)", min_value=1, max_value=5000, value=200, step=10)
     run_mode = st.selectbox("运行模式", ["快速模式（分批+进度）", "全量模式（单次）"], index=0)
-    batch_size = st.number_input("快速模式每批扫描数", min_value=100, max_value=2000, value=400, step=100)
+    batch_size = st.number_input("快速模式每批扫描数", min_value=50, max_value=2000, value=50, step=50)
     timeout_seconds = st.number_input(
         "单次运行超时（秒）",
         min_value=60,
