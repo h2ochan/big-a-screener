@@ -1,0 +1,13 @@
+.cache_hist/
+Library/
+__pycache__/
+*.pyc
+.venv/
+.streamlit/
+
+# Local outputs/logs
+screen_results.csv
+screen_results_new.csv
+screen_run_history.json
+daily_rebuild.log
+daily_rebuild_state.json
